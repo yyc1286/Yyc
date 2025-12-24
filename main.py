@@ -31,71 +31,93 @@ SCHOOL_EC = {
     "동산고": {"ec": 8.0, "color": "#FF6B6B"}
 }
 
+def normalize_both(text):
+    """텍스트를 NFC와 NFD로 정규화"""
+    return (unicodedata.normalize("NFC", text), 
+            unicodedata.normalize("NFD", text))
+
 @st.cache_data
 def load_environment_data():
-    """환경 데이터 로딩 (NFC/NFD 정규화 적용)"""
+    """환경 데이터 로딩"""
     data_dir = Path("data")
     env_data = {}
     
     if not data_dir.exists():
-        st.error("data 폴더를 찾을 수 없습니다!")
+        st.error(f"data 폴더가 없습니다. 현재 위치: {Path.cwd()}")
         return None
     
-    # CSV 파일 찾기
-    csv_files = list(data_dir.glob("*환경데이터.csv"))
+    # 모든 파일 나열
+    all_files = list(data_dir.iterdir())
+    csv_files = [f for f in all_files if f.suffix.lower() == '.csv']
     
-    for file_path in csv_files:
-        # NFC/NFD 양방향 정규화로 학교명 추출
-        filename = file_path.stem
-        filename_nfc = unicodedata.normalize("NFC", filename)
-        filename_nfd = unicodedata.normalize("NFD", filename)
+    if not csv_files:
+        st.error(f"CSV 파일이 없습니다. 폴더 내 파일: {[f.name for f in all_files]}")
+        return None
+    
+    # 각 CSV 파일 처리
+    for csv_path in csv_files:
+        fname_nfc, fname_nfd = normalize_both(csv_path.stem)
         
         for school in SCHOOL_EC.keys():
-            school_nfc = unicodedata.normalize("NFC", school)
-            school_nfd = unicodedata.normalize("NFD", school)
+            school_nfc, school_nfd = normalize_both(school)
             
-            if school_nfc in filename_nfc or school_nfd in filename_nfd:
+            # 매칭 확인
+            if (school_nfc in fname_nfc or school_nfd in fname_nfd):
                 try:
-                    df = pd.read_csv(file_path)
+                    df = pd.read_csv(csv_path, encoding='utf-8-sig')
                     env_data[school] = df
                     break
-                except Exception as e:
-                    st.error(f"{file_path.name} 로딩 실패: {e}")
+                except:
+                    try:
+                        df = pd.read_csv(csv_path, encoding='cp949')
+                        env_data[school] = df
+                        break
+                    except Exception as e:
+                        st.warning(f"{csv_path.name} 로딩 실패: {e}")
     
-    return env_data if env_data else None
+    return env_data if len(env_data) > 0 else None
 
 @st.cache_data
 def load_growth_data():
     """생육 결과 데이터 로딩"""
     data_dir = Path("data")
     
-    # XLSX 파일 찾기
-    xlsx_files = list(data_dir.glob("*생육결과데이터.xlsx"))
-    
-    if not xlsx_files:
-        st.error("생육결과 XLSX 파일을 찾을 수 없습니다!")
+    if not data_dir.exists():
+        st.error("data 폴더가 없습니다.")
         return None
     
+    # 엑셀 파일 찾기
+    all_files = list(data_dir.iterdir())
+    excel_files = [f for f in all_files if f.suffix.lower() in ['.xlsx', '.xls']]
+    
+    if not excel_files:
+        st.error(f"엑셀 파일이 없습니다. 폴더 내 파일: {[f.name for f in all_files]}")
+        return None
+    
+    # 첫 번째 엑셀 파일 사용
+    excel_path = excel_files[0]
+    
     try:
-        excel_file = pd.ExcelFile(xlsx_files[0])
+        # 모든 시트 읽기
+        excel_file = pd.ExcelFile(excel_path, engine='openpyxl')
         growth_data = {}
         
         for sheet_name in excel_file.sheet_names:
-            sheet_nfc = unicodedata.normalize("NFC", sheet_name)
-            sheet_nfd = unicodedata.normalize("NFD", sheet_name)
+            sheet_nfc, sheet_nfd = normalize_both(sheet_name)
             
             for school in SCHOOL_EC.keys():
-                school_nfc = unicodedata.normalize("NFC", school)
-                school_nfd = unicodedata.normalize("NFD", school)
+                school_nfc, school_nfd = normalize_both(school)
                 
-                if school_nfc in sheet_nfc or school_nfd in sheet_nfd:
-                    df = pd.read_excel(xlsx_files[0], sheet_name=sheet_name)
+                # 시트명에 학교명 포함 여부 확인
+                if (school_nfc in sheet_nfc or school_nfd in sheet_nfd):
+                    df = pd.read_excel(excel_path, sheet_name=sheet_name, engine='openpyxl')
                     growth_data[school] = df
                     break
         
-        return growth_data if growth_data else None
+        return growth_data if len(growth_data) > 0 else None
+        
     except Exception as e:
-        st.error(f"생육 데이터 로딩 실패: {e}")
+        st.error(f"엑셀 파일 읽기 실패: {e}")
         return None
 
 # 데이터 로딩
@@ -103,8 +125,23 @@ with st.spinner("데이터를 불러오는 중..."):
     env_data = load_environment_data()
     growth_data = load_growth_data()
 
+# 데이터 확인
 if env_data is None or growth_data is None:
-    st.error("필요한 데이터 파일을 찾을 수 없습니다. data 폴더와 파일을 확인해주세요.")
+    st.error("⚠️ 데이터 파일을 찾을 수 없습니다!")
+    
+    with st.expander("디버깅 정보 확인"):
+        data_dir = Path("data")
+        if data_dir.exists():
+            st.write("**data 폴더 내 파일 목록:**")
+            for f in data_dir.iterdir():
+                st.write(f"- {f.name} ({f.suffix})")
+        else:
+            st.write("data 폴더가 존재하지 않습니다.")
+        
+        st.write("**필요한 파일:**")
+        st.write("- CSV: 송도고_환경데이터.csv, 하늘고_환경데이터.csv, 아라고_환경데이터.csv, 동산고_환경데이터.csv")
+        st.write("- XLSX: 4개교_생육결과데이터.xlsx (시트: 송도고, 하늘고, 아라고, 동산고)")
+    
     st.stop()
 
 # 타이틀
@@ -114,6 +151,15 @@ st.title("🌱 극지식물 최적 EC 농도 연구")
 st.sidebar.header("필터 설정")
 schools = ["전체"] + list(SCHOOL_EC.keys())
 selected_school = st.sidebar.selectbox("학교 선택", schools)
+
+# 데이터 로딩 정보
+with st.sidebar.expander("📊 데이터 로딩 상태"):
+    st.write(f"✅ 환경 데이터: {len(env_data)}개 학교")
+    for school in env_data.keys():
+        st.write(f"  - {school}: {len(env_data[school])}행")
+    st.write(f"✅ 생육 데이터: {len(growth_data)}개 학교")
+    for school in growth_data.keys():
+        st.write(f"  - {school}: {len(growth_data[school])}개체")
 
 # 탭 생성
 tab1, tab2, tab3 = st.tabs(["📖 실험 개요", "🌡️ 환경 데이터", "📊 생육 결과"])
